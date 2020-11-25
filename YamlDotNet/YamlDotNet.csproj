@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>netcoreapp3.0;netstandard2.1;netstandard1.3;net20;net35;net40;net45</TargetFrameworks>
+    <TargetFrameworks>netcoreapp3.1;netcoreapp3.0;netstandard2.1;netstandard1.3;net20;net35;net45</TargetFrameworks>
 
     <PackageProjectUrl>https://github.com/aaubry/YamlDotNet</PackageProjectUrl>
     <RepositoryUrl>https://github.com/aaubry/YamlDotNet</RepositoryUrl>
@@ -26,7 +26,12 @@
     <NoWarn>1591;1574;8600;8602;8604</NoWarn>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(TargetFramework)' == 'netstandard1.3' Or '$(TargetFramework)' == 'netstandard2.1' Or '$(TargetFramework)' == 'netcoreapp3.0'">
+    <PropertyGroup Condition="'$(TargetFramework)' != 'netcoreapp3.1'">
+        <!-- Since the BCL is not yet annotated in other platforms, disable the nullable warnings when compiling for those -->
+        <NoWarn>1591;1574;8600;8602;8604</NoWarn>
+    </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'netstandard1.3' Or '$(TargetFramework)' == 'netstandard2.1' Or '$(TargetFramework)' == 'netcoreapp3.0' Or '$(TargetFramework)' == 'netcoreapp3.1'">
     <NetStandard>true</NetStandard>
   </PropertyGroup>
 
@@ -53,17 +58,24 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'netcoreapp3.0'">
+    <PackageReference Include="Microsoft.NETCore.App">
+      <Version>2.2.8</Version>
+    </PackageReference>
     <PackageReference Include="System.ComponentModel.TypeConverter">
       <Version>4.3.0</Version>
     </PackageReference>
   </ItemGroup>
 
+<ItemGroup Condition="'$(TargetFramework)' == 'netcoreapp3.1'">
+    <PackageReference Include="Microsoft.NETCore.App">
+      <Version>2.2.8</Version>
+    </PackageReference>
+    <PackageReference Include="System.ComponentModel.TypeConverter">
+        <Version>4.3.0</Version>
+    </PackageReference>
+</ItemGroup>
+    
   <Import Project="../build/common.props" />
-
-  <PropertyGroup Condition="'$(TargetFramework)' == 'net40'">
-    <FrameworkPathOverride>$(MSBuildProjectDirectory)/../BuildUtils.UnityPrerequisites/Unity Subset v3.5</FrameworkPathOverride>
-    <DefineConstants>$(DefineConstants);UNITY</DefineConstants>
-  </PropertyGroup>
 
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug-AOT' ">
     <TargetFrameworks>net35</TargetFrameworks>
