@@ -30,4 +30,4 @@ YamlDotNet/Properties/AssemblyInfo.Generated.cs
 /.vs
 /YamlDotNet/Properties/AssemblyInfo.cs
 BenchmarkDotNet.Artifacts
-
+testToCommit
