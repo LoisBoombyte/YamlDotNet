@@ -28,6 +28,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
+using System.Collections.Generic;
 
 namespace YamlDotNet.Serialization.Utilities
 {
@@ -43,7 +44,7 @@ namespace YamlDotNet.Serialization.Utilities
         /// <typeparam name="TConvertible">The type to which the converter should be associated.</typeparam>
         /// <typeparam name="TConverter">The type of the converter.</typeparam>
 #endif
-#if !(NETCOREAPP3_0 || NETSTANDARD2_1 || NETSTANDARD1_3 || UNITY || NETCOREAPP3_1)
+#if !(NETCOREAPP3_1 || NETCOREAPP3_0 || NETSTANDARD2_1 || NETSTANDARD1_3 || UNITY)
         [System.Security.Permissions.PermissionSet(System.Security.Permissions.SecurityAction.LinkDemand, Name = "FullTrust")]
 #endif
 #if !(NETSTANDARD1_3 || UNITY)
@@ -191,6 +192,71 @@ namespace YamlDotNet.Serialization.Utilities
                 return destinationConverter.ConvertFrom(null, culture, value);
             }
 
+            //For special Unity Serialization of int[], enum[], List<int>, List<enum>
+            //we have a long string, composed of blocks of 8 chars, each of them
+            //being 4 blocks of 2 hexa numbers. We have to read them from left to right.
+            //Example : "000100000010000000200000f3650a00"
+            // - 256   : "00010000"
+            // - 4096  : "00100000"
+            // - 8192  : "00200000"
+            // - 681459: "f3650a00"
+            if (sourceType == typeof(string))
+            {
+                //we want to catch int[], EnumType[], List<int>, List<EnumType>, EnumType
+                if (destinationType.BaseType == typeof(Array) || string.Equals(destinationType.Name, "List`1"))
+                {
+                    //Each tab element (enum or int32 value) is serialized in a string of 8*char
+                    string? strSource = value.ToString();
+
+                    if (!string.IsNullOrEmpty(strSource))
+                    {
+                        //Deserialize data to a int[]
+                        int[] dataTabInt = FromUnitySerializationToIntArray(strSource);
+
+                        //Then we will test the different "destination Type cases"
+                        //1. enum[]
+                        //2. int[] (already done)
+                        //3. List<enum>
+                        //4. List<int>
+                        if (destinationType.BaseType == typeof(Array))
+                        {
+                            //1. enum []
+                            MethodInfo[] methods = destinationType.GetMethods();
+                            if (methods.Length > 0 && methods[0].ReturnType.BaseType == typeof(System.Enum))
+                            {
+                                //find the wanted Enum Type
+                                Type dataContentType = methods[0].ReturnType;
+
+                                return FromIntArrayToEnumArray(dataContentType, dataTabInt);
+                            }
+                            //2. int[]
+                            else
+                            {
+                                return dataTabInt;
+                            }
+                        }
+
+                        if (string.Equals(destinationType.Name, "List`1"))
+                        {
+                            //3. List<enum>
+                            MethodInfo[] methods = destinationType.GetMethods();
+                            if (methods[3].ReturnType.BaseType == typeof(System.Enum))
+                            {
+                                //find the wanted Enum Type
+                                Type dataContentType = methods[3].ReturnType;
+
+                                return FromIntArrayToEnumList(destinationType, dataContentType, dataTabInt);
+                            }
+                            //4. List<int>
+                            else
+                            {
+                                return FromIntArrayToIntList(dataTabInt);
+                            }
+                        }
+                    }
+                }
+            }
+
             // Try to find a casting operator in the source or destination type
             foreach (var type in new[] { sourceType, destinationType })
             {
@@ -257,6 +323,128 @@ namespace YamlDotNet.Serialization.Utilities
 
             // Default to the Convert class
             return Convert.ChangeType(value, destinationType, CultureInfo.InvariantCulture);
+        }
+
+        public static object? FromIntArrayToEnumArray(Type enumType, int[] dataArray)
+        {
+            //Create array's Type : enumType[]
+            Type dataType = enumType.MakeArrayType();
+
+            //Create its constructor
+            Type[] constructorParameters = new Type[1] { typeof(int) };
+            ConstructorInfo? constructorData = dataType.GetConstructor(constructorParameters);
+
+            //then use constructor
+            if (constructorData != null)
+            {
+                //we now get a new empty enumType[]{}
+                object returnedData = constructorData.Invoke(new object[] { dataArray.Length });
+
+                //Get the method to add elements to the Array
+                MethodInfo? setValMethod = dataType.GetMethod("SetValue", new Type[2] { typeof(object), typeof(int) });
+
+                if (setValMethod != null)
+                {
+                    for (int j = 0; j < dataArray.Length; j++)
+                    {
+                        //convert elements
+                        object enumDataElem = Enum.Parse(enumType, dataArray[j].ToString());
+
+                        //add elements to the array EnumType[]
+                        setValMethod.Invoke(returnedData, new object[] { enumDataElem, j });
+                    }
+                    return returnedData;
+                }
+            }
+            return null;
+        }
+
+        public static object? FromIntArrayToEnumList(Type listEnumType, Type enumType, int[] dataArray)
+        {
+            //Create its constructor
+            Type[] constructorParameters = new Type[0];
+            ConstructorInfo? constructorData = listEnumType.GetConstructor(constructorParameters);
+
+            //then use constructor
+            if (constructorData != null)
+            {
+                //get a new empty List<enumType>
+                object returnedData = constructorData.Invoke(null);
+
+                //Method to add elements to the List
+                MethodInfo? addMethod = listEnumType.GetMethod("Add");
+
+                if (addMethod != null)
+                {
+                    for (int j = 0; j < dataArray.Length; j++)
+                    {
+                        //convert elements
+                        object enumDataElem = Enum.Parse(enumType, dataArray[j].ToString());
+
+                        //add elements to the array EnumType[]
+                        addMethod.Invoke(returnedData, new object[] { enumDataElem });
+                    }
+                    return returnedData;
+                }
+            }
+            return null;
+        }
+
+        public static List<int> FromIntArrayToIntList(int[] dataArray)
+        {
+            int lenght = dataArray.Length;
+            List<int> returnedList = new List<int>(lenght);
+
+            for (int j = 0; j < lenght; j++)
+            {
+                returnedList.Add(dataArray[j]);
+            }
+
+            return returnedList;
+        }
+
+        //The string is composed of 4 blocks of 2 chars 
+        //=> 4 blocks of a Hexadecimal value. But we need to read them from left
+        //to right, instead of right to left for a normal Byte / Hex value
+        // e.g : "f3650a00" ==> 681.459
+        // "f3" => 243 * 2^0  = 243
+        // "65" => 101 * 2^8  = 25.856
+        // "0a" => 10  * 2^16 = 655.360
+        // "00" => 0   * 2^24 = 0
+        public static int[] FromUnitySerializationToIntArray(string source)
+        {
+            int totalStrLength = source.Length;
+            int[] dataTabInt = new int[(totalStrLength) / 8];
+
+            //" 8 char block " index
+            int intBlockIndex = 0;
+
+            //let's read 8 chars by 8 chars
+            while (totalStrLength >= (intBlockIndex + 1) * 8)
+            {
+                string oneBlockStr = source.Substring(intBlockIndex * 8, 8);
+
+                //Storing the int32 number
+                int totalValue = 0;
+
+                //read the 4 blocks of 2 chars, each block is a Hex number
+                for (int i = 0; i < 4; i++)
+                {
+                    //first two chars of example : "f3"
+                    string twoHexaChar = oneBlockStr.Substring(i * 2, 2);
+
+                    //will thus store 243 
+                    int.TryParse(twoHexaChar, NumberStyles.AllowHexSpecifier, new CultureInfo("en-US"), out int valueTwoHexaChar);
+
+                    //then multiply : 243 * 2^0     and store result
+                    totalValue += valueTwoHexaChar * (Convert.ToInt32(Math.Pow(2, i * 8)));
+                }
+
+                dataTabInt[intBlockIndex] = totalValue;
+                intBlockIndex++;
+            }
+
+            return dataTabInt;
         }
     }
 }
